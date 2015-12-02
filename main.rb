@@ -22,8 +22,7 @@ BaseUrl = "http://blog.keyakizaka46.com"
 MemberClassName = "Member"
 EntryClassName = "Entry"
 
-
-def parsepage(url)
+def parsepage(url, need_loop)
   # http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&ima=2653&cd=member&ct=01
   page = Nokogiri::HTML(open(url))
   page.css('div.kiji').each do |kiji|
@@ -49,10 +48,11 @@ def parsepage(url)
 
     yield(data) if block_given?
   end
+  return if !need_loop
   if page.css('li.next').css('a')[0] != nil then
     puts "nextpage"
     next_url = page.css('li.next').css('a')[0][:href]
-    parsepage("#{BaseUrl}#{next_url}") { |data|
+    parsepage("#{BaseUrl}#{next_url}", true) { |data|
       yield(data) if block_given?
     } if next_url != nil
   else
@@ -75,12 +75,12 @@ def push(objectId)
   puts push.save
 end
 
-def crawlpage
+def crawlpage(need_loop)
   allmember = Parse::Query.new(MemberClassName).tap do |q|
     q.order_by = "blog_url"
   end.get
   allmember.each do |member|
-    parsepage(member['blog_url']) { |data|
+    parsepage(member['blog_url'], need_loop) { |data|
       if is_new?(data[:author], data[:published]) then
         begin
           entry = Parse::Object.new(EntryClassName)
@@ -104,20 +104,22 @@ def crawlpage
   end
 end
 
+def routine_work
+end
+
 all_entry = Parse::Query.new(EntryClassName).tap do |q|
   q.limit = 0
   q.count
 end.get
 if all_entry == nil || all_entry['count'] == 0
   puts "initialize"
-  crawlpage
+  crawlpage(true)
 end
 
 EM.run do
   EM::PeriodicTimer.new(60) do
     puts "routine work"
-    crawlpage { |result|
-      push(result['objectId'])
-    }
+    # 1ページのみ取得する
+    crawlpage(false)
   end
 end
