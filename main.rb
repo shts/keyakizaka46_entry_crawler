@@ -120,6 +120,8 @@ EM.run do
   EM::PeriodicTimer.new(60) do
     puts "routine work"
     # 1ページのみ取得する
-    crawlpage(false)
+    crawlpage(false) { |result|
+      push(result['objectId'])
+    }
   end
 end
