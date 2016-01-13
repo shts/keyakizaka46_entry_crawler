@@ -67,9 +67,7 @@ def is_new?(author, published)
   end.get.first == nil
 end
 
-def push(objectId)
-  data = { :action=> "jp.shts.android.keyakifeed.BLOG_UPDATED",
-           :_objectId => objectId }
+def push(data)
   push = Parse::Push.new(data)
   push.where = { :deviceType => "android" }
   puts push.save
@@ -91,7 +89,21 @@ def crawlpage(need_loop)
           }
           result = entry.save
           puts result
-          yield(result) if block_given?
+
+          objectId = result['objectId']
+          title = entry['title']
+          author = entry['author']
+          author_id = entry['author_id']
+          author_image_url = entry['author_image_url']
+
+          data = { :action => "jp.shts.android.keyakifeed.BLOG_UPDATED",
+                   :_entryObjectId => objectId,
+                   :_title => title,
+                   :_author => author,
+                   :_author_id => author_id,
+                   :_author_image_url => author_image_url
+                  }
+          yield(data) if block_given?
         rescue Net::ReadTimeout => e
           sleep 5
           puts "retry : insert url -> #{member['blog_url']}"
@@ -120,8 +132,8 @@ EM.run do
   EM::PeriodicTimer.new(60) do
     puts "routine work"
     # 1ページのみ取得する
-    crawlpage(false) { |result|
-      push(result['objectId'])
+    crawlpage(false) { |data|
+      push(data)
     }
   end
 end
