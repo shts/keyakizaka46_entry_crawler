@@ -91,8 +91,8 @@ def crawlpage(need_loop)
           puts result
 
           objectId = result['objectId']
-          title = entry['title']
-          author = entry['author']
+          title = data[:title]
+          author = data[:author]
           author_id = entry['author_id']
           author_image_url = entry['author_image_url']
 
