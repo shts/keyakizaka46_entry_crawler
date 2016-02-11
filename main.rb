@@ -24,7 +24,7 @@ EntryClassName = "Entry"
 
 def parsepage(url, need_loop)
   # http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&ima=2653&cd=member&ct=01
-  page = Nokogiri::HTML(open(url))
+  page = Nokogiri::HTML(open(url, 'User-Agent' => 'ruby'))
   page.css('div.kiji').each do |kiji|
     data = {}
     # title
