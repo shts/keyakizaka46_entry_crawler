@@ -38,9 +38,13 @@ def parsepage(url, need_loop)
 
     data[:image_url_list] = Array.new()
     data[:body].css('img').each do |img|
-      image_url = BaseUrl + img[:src]
-      data[:body] = "#{data[:body]}".gsub(img[:src], image_url)
-      data[:image_url_list].push(image_url)
+      if img[:src].empty then
+        # do nothing
+      else
+        image_url = BaseUrl + img[:src]
+        data[:body] = "#{data[:body]}".gsub(img[:src], image_url)
+        data[:image_url_list].push(image_url)
+      end
     end
 
     published = DateTime.parse(kiji.css('div.kiji_foot')[0].text.gsub(/(\r\n|\r|\n|\f)/,""))
