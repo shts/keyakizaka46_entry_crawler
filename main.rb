@@ -38,7 +38,7 @@ def parsepage(url, need_loop)
 
     data[:image_url_list] = Array.new()
     data[:body].css('img').each do |img|
-      if img[:src].empty then
+      if img[:src].empty? then
         # do nothing
       else
         image_url = BaseUrl + img[:src]
