@@ -1,7 +1,4 @@
 
-# view-source:http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&cd=member
-#view-source:http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&ima=2653&cd=member&ct=01
-# プログラムを定期実行するためのライブラリを読み込む
 require 'eventmachine'
 # URLにアクセスするためのライブラリを読み込む
 require 'open-uri'
@@ -11,116 +8,133 @@ require 'nokogiri'
 require "date"
 # Parseライブラリの読み込み
 require 'parse-ruby-client'
-# TODO: Windowsのみで発生する証明書問題によりSSL認証エラーの暫定回避策
-#ENV['SSL_CERT_FILE'] = File.expand_path('C:\rumix\ruby\2.1\i386-mingw32\lib\ruby\2.1.0\rubygems\ssl_certs\cert.pem')
-# TODO: デバッグ用 KEY
+
+require "uri"
+
 Parse.init :application_id => ENV['PARSE_APP_ID'],
            :api_key        => ENV['PARSE_API_KEY']
 
-OfficialSiteUrl = "http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&cd=member"
-BaseUrl = "http://blog.keyakizaka46.com"
+#OfficialSiteUrl = "http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&cd=member"
+BaseUrl = "http://www.keyakizaka46.com"
+BlogBaseUrl = "http://www.keyakizaka46.com/mob/news/diarKiji.php?cd=member&ct="
+# TODO: デバッグ用本番はMember
 MemberClassName = "Member"
 EntryClassName = "Entry"
 
-def parsepage(url, need_loop)
-  # http://blog.keyakizaka46.com/mob/news/diarKiji.php?site=k46&ima=2653&cd=member&ct=01
-  page = Nokogiri::HTML(open(url, 'User-Agent' => 'ruby'))
-  page.css('div.kiji').each do |kiji|
-    data = {}
-    # title
-    data[:yearmonth] =  kiji.css('td.date').css('span.kiji_yearmonth')[0].text
-    data[:day] =  kiji.css('td.date').css('span.kiji_day')[0].text
-    data[:week] =  kiji.css('td.date').css('span.kiji_week')[0].text
+def parsepage key, loop=false
 
-    data[:author] =  kiji.css('td.title').css('span.kiji_member')[0].text
-    data[:title] =  kiji.css('td.title').css('span.kiji_title')[0].text
-    data[:body] = kiji.css('div.kiji_body')
+  page = Nokogiri::HTML(open(BlogBaseUrl + key))
+
+  page.css('article').each do |article|
+
+    data = {}
+    data[:title] = normalize article.css('.box-ttl > h3').text
+    data[:published] = normalize article.css('.box-bottom > ul > li')[0].text
+    data[:published] = Parse::Date.new(data[:published])
+
+    data[:article_url] = BaseUrl + article.css('.box-bottom > ul > li')[1].css('a')[0][:href]
+    data[:article_url] = url_normalize data[:article_url]
 
     data[:image_url_list] = Array.new()
-    data[:body].css('img').each do |img|
-      if img[:src].empty? then
-        # do nothing
-      else
-        image_url = BaseUrl + img[:src]
-        data[:body] = "#{data[:body]}".gsub(img[:src], image_url)
-        data[:image_url_list].push(image_url)
-      end
+    article.css('.box-article').css('img').each do |img|
+      data[:image_url_list].push(BaseUrl + img[:src])
     end
-
-    published = DateTime.parse(kiji.css('div.kiji_foot')[0].text.gsub(/(\r\n|\r|\n|\f)/,""))
-    data[:published] = Parse::Date.new(published)
 
     yield(data) if block_given?
   end
-  return if !need_loop
-  if page.css('li.next').css('a')[0] != nil then
-    puts "nextpage"
-    next_url = page.css('li.next').css('a')[0][:href]
-    parsepage("#{BaseUrl}#{next_url}", true) { |data|
+
+  return if !loop
+  puts "next page"
+
+  page.css('.pager > ul > li').each do |li|
+    parsepage BaseUrl + li.css('a')[0][:href] { |data|
       yield(data) if block_given?
-    } if next_url != nil
-  else
-    puts "finish"
+    } if li.text == '>'
   end
 end
 
-def is_new?(author, published)
-  Parse::Query.new(EntryClassName).tap do |q|
-    q.eq("author", author)
-    q.eq("published", published)
-  end.get.first == nil
+def normalize str
+  str.gsub(/(\r\n|\r|\n|\f)/,"").strip
 end
 
-def push(data)
-  push = Parse::Push.new(data)
+def url_normalize url
+  # before
+  # http://www.keyakizaka46.com/mob/news/diarKijiShw.php?site=k46o&ima=0445&id=405&cd=member
+  # after
+  # http://www.keyakizaka46.com/mob/news/diarKijiShw.php?id=405&cd=member
+  uri = URI.parse(url)
+  q_array = URI::decode_www_form(uri.query)
+  q_hash = Hash[q_array]
+  "http://www.keyakizaka46.com/mob/news/diarKijiShw.php?id=#{q_hash['id']}&cd=member"
+end
+
+def save_data data, member, debug=false
+  begin
+    data[:member_id] = member['objectId']
+    data[:member_key] = member['key']
+    data[:member_name] = member['name_main']
+    data[:member_image_url] = member['image_url']
+
+    entry = Parse::Object.new(EntryClassName)
+    data.each { |key, val|
+      entry[key] = val
+    }
+    result = entry.save
+    yield(result, data) if block_given?
+
+  rescue Net::ReadTimeout => e
+    sleep 5
+    puts "retry : insert url -> #{data[:article_url]}"
+    retry
+  end
+end
+
+def push_notification result, data
+  pushdata = { :action => "jp.shts.android.keyakifeed.BLOG_UPDATED",
+           :_entryObjectId => result['objectId'],
+           :_title => data[:title],
+           :_article_url => data[:article_url],
+           :_member_id => data[:member_id],
+           :_member_name => data[:member_name],
+           :_member_image_url => data[:member_image_url]
+          }
+  push = Parse::Push.new(pushdata)
   push.where = { :deviceType => "android" }
+  puts pushdata
   puts push.save
 end
 
-def crawlpage(need_loop)
-  allmember = Parse::Query.new(MemberClassName).tap do |q|
-    q.order_by = "blog_url"
-  end.get
-  allmember.each do |member|
-    parsepage(member['blog_url'], need_loop) { |data|
-      if is_new?(data[:author], data[:published]) then
-        begin
-          entry = Parse::Object.new(EntryClassName)
-          entry['author_id'] = member['objectId']
-          entry['author_image_url'] = member['image_url']
-          data.each { |key, val|
-            entry[key] = val
-          }
-          result = entry.save
-          puts result
+def is_new? data
+  Parse::Query.new(EntryClassName).tap do |q|
+    q.eq("article_url", data[:article_url])
+  end.get.first == nil
+end
 
-          objectId = result['objectId']
-          title = data[:title]
-          author = data[:author]
-          author_id = entry['author_id']
-          author_image_url = entry['author_image_url']
+def get_all_member
+  Parse::Query.new(MemberClassName).tap do |q|
+    q.order_by = "key"
+  end.get.each { |member| yield(member) if block_given? }
+end
 
-          data = { :action => "jp.shts.android.keyakifeed.BLOG_UPDATED",
-                   :_entryObjectId => objectId,
-                   :_title => title,
-                   :_author => author,
-                   :_author_id => author_id,
-                   :_author_image_url => author_image_url
-                  }
-          yield(data) if block_given?
-        rescue Net::ReadTimeout => e
-          sleep 5
-          puts "retry : insert url -> #{member['blog_url']}"
-          retry
-        end
-      else
-        puts "already exist entry"
-      end
+def get_all_entry
+  get_all_member { |member|
+    looop=true
+    parsepage(member['key'], looop) { |data|
+      save_data(data, member) if is_new? data
     }
-  end
+  }
 end
 
 def routine_work
+  get_all_member { |member|
+    parsepage(member['key']) { |data|
+      isnew = is_new?(data)
+      puts "is new? #{isnew}"
+      save_data(data, member) { |result, data|
+        push_notification result, data
+      } if is_new? data
+    }
+  }
 end
 
 all_entry = Parse::Query.new(EntryClassName).tap do |q|
@@ -129,15 +143,13 @@ all_entry = Parse::Query.new(EntryClassName).tap do |q|
 end.get
 if all_entry == nil || all_entry['count'] == 0
   puts "initialize"
-  crawlpage(true)
+  get_all_entry
 end
 
 EM.run do
   EM::PeriodicTimer.new(60) do
     puts "routine work"
     # 1ページのみ取得する
-    crawlpage(false) { |data|
-      push(data)
-    }
+    routine_work
   end
 end
